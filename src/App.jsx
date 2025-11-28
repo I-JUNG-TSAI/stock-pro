@@ -44,7 +44,7 @@ import {
 
 // --- 系統設定與預設資料 ---
 
-// 用於初始化 LocalStorage 的預設資料 (當使用者第一次開啟時顯示)
+// 用於初始化 LocalStorage 的預設資料
 const DEMO_DATA = {
   positions: {
     'NVDA': { shares: 10, cost: 450.00, zeroCost: { shares: 2, faceValue: 0 } },
@@ -339,7 +339,7 @@ const DashboardView = ({ positions, stocks, cash, totalEquity, totalMarketValue,
         return list.sort((a, b) => b.pl - a.pl); 
     }, [positions, stocks]);
 
-    // 取得零成本持倉列表 (需求2)
+    // 取得零成本持倉列表
     const zeroCostHoldings = useMemo(() => {
         return Object.keys(positions)
             .filter(symbol => positions[symbol].zeroCost && positions[symbol].zeroCost.shares > 0)
@@ -407,7 +407,7 @@ const DashboardView = ({ positions, stocks, cash, totalEquity, totalMarketValue,
                          <AllocationChart positions={positions} stocks={stocks} cash={cash} />
                     </div>
                     
-                    {/* 新增: 零成本庫存區塊 (需求2) */}
+                    {/* 零成本庫存區塊 */}
                     <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5">
                         <h3 className="text-sm font-bold text-amber-400 mb-4 flex items-center gap-2"><Gift size={16} /> 零成本 / 獲利股庫存</h3>
                         {zeroCostHoldings.length > 0 ? (
@@ -480,7 +480,7 @@ const TrophyIcon = ({size, className}) => (
 );
 
 
-// --- K線圖組件 ---
+// --- K線圖組件 (支援手機手勢) ---
 const CandleChart = ({ data, avgCost, dataStatus, onRetry, dataSource }) => {
   const containerRef = useRef(null);
   const [hoverInfo, setHoverInfo] = useState(null);
@@ -500,7 +500,8 @@ const CandleChart = ({ data, avgCost, dataStatus, onRetry, dataSource }) => {
     startY: 0,
     startOffset: 0,
     startVisibleCount: 0,
-    startPadding: 0
+    startPadding: 0,
+    startDistance: 0 // For pinch zoom
   });
 
   useEffect(() => {
@@ -535,6 +536,7 @@ const CandleChart = ({ data, avgCost, dataStatus, onRetry, dataSource }) => {
   const visibleMA20 = ma20Data.slice(startIndex, endIndex);
   const visibleMA60 = ma60Data.slice(startIndex, endIndex);
 
+  // Mouse Events
   const handleMouseDown = (e, mode) => {
     e.preventDefault();
     setDragState({
@@ -544,7 +546,8 @@ const CandleChart = ({ data, avgCost, dataStatus, onRetry, dataSource }) => {
       startY: e.clientY,
       startOffset: safeOffsetEnd,
       startVisibleCount: safeVisibleCount,
-      startPadding: yScalePadding
+      startPadding: yScalePadding,
+      startDistance: 0
     });
   };
 
@@ -592,6 +595,59 @@ const CandleChart = ({ data, avgCost, dataStatus, onRetry, dataSource }) => {
     setHoverInfo(null);
   };
 
+  // Touch Events (For Mobile Gestures)
+  const getTouchDistance = (touches) => {
+      return Math.hypot(
+          touches[0].clientX - touches[1].clientX,
+          touches[0].clientY - touches[1].clientY
+      );
+  };
+
+  const handleTouchStart = (e) => {
+      // 1 finger = pan, 2 fingers = pinch zoom
+      if (e.touches.length === 1) {
+          setDragState({
+              isDragging: true,
+              mode: 'pan',
+              startX: e.touches[0].clientX,
+              startOffset: safeOffsetEnd,
+              startVisibleCount: safeVisibleCount
+          });
+      } else if (e.touches.length === 2) {
+          e.preventDefault();
+          setDragState({
+              isDragging: true,
+              mode: 'pinch',
+              startDistance: getTouchDistance(e.touches),
+              startVisibleCount: safeVisibleCount
+          });
+      }
+  };
+
+  const handleTouchMove = (e) => {
+      if (!dragState.isDragging) return;
+      e.preventDefault(); // Prevent scrolling while interacting with chart
+
+      if (dragState.mode === 'pan' && e.touches.length === 1) {
+          const rect = containerRef.current.getBoundingClientRect();
+          const diffX = e.touches[0].clientX - dragState.startX;
+          const chartWidth = rect.width - 48;
+          const candleWidth = chartWidth / safeVisibleCount;
+          const candlesMoved = Math.round(diffX / candleWidth);
+          setOffsetEnd(dragState.startOffset + candlesMoved);
+      } else if (dragState.mode === 'pinch' && e.touches.length === 2) {
+          const newDistance = getTouchDistance(e.touches);
+          const scale = dragState.startDistance / newDistance;
+          // Scale visible count based on pinch
+          const newVisibleCount = Math.round(dragState.startVisibleCount * scale);
+          setVisibleCount(newVisibleCount);
+      }
+  };
+
+  const handleTouchEnd = () => {
+      setDragState(prev => ({ ...prev, isDragging: false, mode: null }));
+  };
+
   let prices = visibleData.flatMap(d => [d.h, d.l]);
   if (showMA5) prices = [...prices, ...visibleMA5.map(d => d.v).filter(v => v)];
   if (showMA20) prices = [...prices, ...visibleMA20.map(d => d.v).filter(v => v)];
@@ -633,7 +689,16 @@ const CandleChart = ({ data, avgCost, dataStatus, onRetry, dataSource }) => {
   const errorMsg = dataStatus !== 'REAL' && dataStatus !== 'MOCK' ? dataStatus : null;
 
   return (
-    <div className="relative group/chart select-none" ref={containerRef} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseLeave}>
+    <div 
+        className="relative group/chart select-none touch-none" 
+        ref={containerRef} 
+        onMouseMove={handleMouseMove} 
+        onMouseUp={handleMouseUp} 
+        onMouseLeave={handleMouseLeave}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+    >
         <div className="absolute top-2 left-2 z-40 flex flex-col items-start gap-2">
             {isReal ? (
                 <div className="flex items-center gap-1.5 px-2 py-1 bg-emerald-900/50 backdrop-blur border border-emerald-700/50 rounded-md text-[10px] text-emerald-200 shadow-sm">
@@ -1333,7 +1398,7 @@ export default function StockTrackerApp() {
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0 bg-slate-950 overflow-y-auto relative">
-        <div className="md:hidden p-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-950/80 backdrop-blur z-10"><button onClick={() => setIsSidebarOpen(true)}><Menu className="text-white" /></button><span className="font-bold">{selectedSymbol || '總覽'}</span><div className="w-6" /></div>
+        <div className="md:hidden p-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-950 z-10"><button onClick={() => setIsSidebarOpen(true)}><Menu className="text-white" /></button><span className="font-bold">{selectedSymbol || '總覽'}</span><div className="w-6" /></div>
         {selectedSymbol ? (
           <div className="p-4 md:p-6 lg:p-10 max-w-6xl mx-auto w-full space-y-6 md:space-y-8">
             <div className="flex flex-col md:flex-row justify-between md:items-end gap-6">
