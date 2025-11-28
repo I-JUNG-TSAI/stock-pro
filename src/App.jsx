@@ -740,6 +740,23 @@ const PortfolioEditorModal = ({ isOpen, onClose, cash, setCash, positions, setPo
   const [localCash, setLocalCash] = useState(cash);
   const [localPositions, setLocalPositions] = useState(positions);
   useEffect(() => { if (isOpen) { setLocalCash(cash); setLocalPositions(JSON.parse(JSON.stringify(positions))); } }, [isOpen, cash, positions]);
+  
+  const handleSave = () => {
+    setCash(parseFloat(localCash) || 0);
+    setPositions(localPositions);
+    onClose();
+  };
+
+  const handlePositionChange = (symbol, field, value) => {
+    setLocalPositions(prev => ({
+      ...prev,
+      [symbol]: {
+        ...prev[symbol],
+        [field]: parseFloat(value) || 0
+      }
+    }));
+  };
+
   if (!isOpen) return null;
   return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
@@ -757,8 +774,8 @@ const PortfolioEditorModal = ({ isOpen, onClose, cash, setCash, positions, setPo
                               <div key={symbol} className="bg-slate-800/50 p-3 rounded-lg border border-slate-700">
                                   <div className="flex justify-between items-center mb-2"><span className="font-bold text-white">{symbol}</span><button onClick={() => { const next = {...localPositions}; delete next[symbol]; setLocalPositions(next); }} className="text-xs text-rose-400 hover:text-rose-300 flex items-center gap-1"><Trash2 size={12}/> 刪除</button></div>
                                   <div className="grid grid-cols-2 gap-3">
-                                      <div><label className="text-[10px] text-slate-500 uppercase block mb-1">股數 (Shares)</label><input type="number" value={localPositions[symbol].shares} onChange={(e) => setLocalPositions(prev => ({...prev, [symbol]: {...prev[symbol], shares: parseFloat(e.target.value)||0}}))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-white font-mono focus:border-indigo-500 outline-none" /></div>
-                                      <div><label className="text-[10px] text-slate-500 uppercase block mb-1">平均成本 (Avg Cost)</label><input type="number" value={localPositions[symbol].cost} onChange={(e) => setLocalPositions(prev => ({...prev, [symbol]: {...prev[symbol], cost: parseFloat(e.target.value)||0}}))} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-white font-mono focus:border-indigo-500 outline-none" /></div>
+                                      <div><label className="text-[10px] text-slate-500 uppercase block mb-1">股數 (Shares)</label><input type="number" value={localPositions[symbol].shares} onChange={(e) => handlePositionChange(symbol, 'shares', e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-white font-mono focus:border-indigo-500 outline-none" /></div>
+                                      <div><label className="text-[10px] text-slate-500 uppercase block mb-1">平均成本 (Avg Cost)</label><input type="number" value={localPositions[symbol].cost} onChange={(e) => handlePositionChange(symbol, 'cost', e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-sm text-white font-mono focus:border-indigo-500 outline-none" /></div>
                                   </div>
                               </div>
                           ))}
