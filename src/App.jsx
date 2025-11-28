@@ -47,7 +47,7 @@ import {
 // 用於初始化 LocalStorage 的預設資料 (當使用者第一次開啟時顯示)
 const DEMO_DATA = {
   positions: {
-    'NVDA': { shares: 10, cost: 450.00, zeroCost: { shares: 0, faceValue: 0 } },
+    'NVDA': { shares: 10, cost: 450.00, zeroCost: { shares: 2, faceValue: 0 } },
     'TSLA': { shares: 25, cost: 210.50 },
     'AAPL': { shares: 50, cost: 145.20 }
   },
@@ -312,9 +312,10 @@ const DashboardView = ({ positions, stocks, cash, totalEquity, totalMarketValue,
             const stock = stocks.find(s => s.symbol === symbol);
             if(stock) {
                 totalCost += pos.shares * pos.cost;
-                // 估算當日損益: (現價 - 昨日收盤) * 總股數
+                // 估算當日損益: (現價 - 昨日收盤) * 總股數 (含零成本)
                 const prevClose = stock.price / (1 + (stock.change / 100));
-                dayChange += (stock.price - prevClose) * (pos.shares + (pos.zeroCost?.shares || 0));
+                const totalShares = pos.shares + (pos.zeroCost?.shares || 0);
+                dayChange += (stock.price - prevClose) * totalShares;
             }
         });
 
@@ -338,28 +339,46 @@ const DashboardView = ({ positions, stocks, cash, totalEquity, totalMarketValue,
         return list.sort((a, b) => b.pl - a.pl); 
     }, [positions, stocks]);
 
+    // 取得零成本持倉列表 (需求2)
+    const zeroCostHoldings = useMemo(() => {
+        return Object.keys(positions)
+            .filter(symbol => positions[symbol].zeroCost && positions[symbol].zeroCost.shares > 0)
+            .map(symbol => {
+                const stock = stocks.find(s => s.symbol === symbol) || { price: 0 };
+                const zc = positions[symbol].zeroCost;
+                return {
+                    symbol,
+                    shares: zc.shares,
+                    faceValue: zc.faceValue,
+                    marketValue: zc.shares * stock.price,
+                    price: stock.price
+                };
+            })
+            .sort((a, b) => b.marketValue - a.marketValue);
+    }, [positions, stocks]);
+
     return (
-        <div className="p-6 lg:p-10 max-w-6xl mx-auto w-full space-y-8 animate-in fade-in duration-500">
+        <div className="p-4 md:p-6 lg:p-10 max-w-6xl mx-auto w-full space-y-6 md:space-y-8 animate-in fade-in duration-500">
             <div>
-                <h2 className="text-3xl font-bold text-white mb-1">投資總覽 Dashboard</h2>
+                <h2 className="text-2xl md:text-3xl font-bold text-white mb-1">投資總覽 Dashboard</h2>
                 <p className="text-slate-400 text-sm">歡迎回來，您的資產數據已自本地儲存載入</p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 p-6 rounded-xl shadow-lg relative overflow-hidden group">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6">
+                <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 p-4 md:p-6 rounded-xl shadow-lg relative overflow-hidden group">
                     <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity"><Briefcase size={80}/></div>
                     <div className="text-slate-400 text-xs uppercase tracking-wider mb-2">總資產 (Total Equity)</div>
-                    <div className="text-3xl font-mono font-bold text-white mb-2">{formatCurrency(totalEquity)}</div>
+                    <div className="text-2xl md:text-3xl font-mono font-bold text-white mb-2">{formatCurrency(totalEquity)}</div>
                     <div className="flex items-center gap-2 text-xs">
                         <span className="bg-slate-700/50 px-2 py-0.5 rounded text-slate-300">現金: {formatCurrency(cash)}</span>
                         <span className="bg-indigo-900/30 px-2 py-0.5 rounded text-indigo-300">股票: {formatCurrency(totalMarketValue)}</span>
                     </div>
                 </div>
 
-                <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 p-6 rounded-xl shadow-lg relative overflow-hidden group">
+                <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 p-4 md:p-6 rounded-xl shadow-lg relative overflow-hidden group">
                      <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity"><Activity size={80}/></div>
                     <div className="text-slate-400 text-xs uppercase tracking-wider mb-2">未實現損益 (Unrealized P/L)</div>
-                    <div className={`text-3xl font-mono font-bold mb-2 ${portfolioStats.totalUnrealizedPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    <div className={`text-2xl md:text-3xl font-mono font-bold mb-2 ${portfolioStats.totalUnrealizedPL >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {portfolioStats.totalUnrealizedPL >= 0 ? '+' : ''}{formatCurrency(portfolioStats.totalUnrealizedPL)}
                     </div>
                     <div className={`text-sm font-bold flex items-center gap-1 ${portfolioStats.totalUnrealizedPL >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
@@ -367,10 +386,10 @@ const DashboardView = ({ positions, stocks, cash, totalEquity, totalMarketValue,
                     </div>
                 </div>
 
-                <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 p-6 rounded-xl shadow-lg relative overflow-hidden group">
+                <div className="bg-gradient-to-br from-slate-800 to-slate-900 border border-slate-700 p-4 md:p-6 rounded-xl shadow-lg relative overflow-hidden group">
                      <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity"><TrendingUp size={80}/></div>
                     <div className="text-slate-400 text-xs uppercase tracking-wider mb-2">當日預估損益 (Day Change)</div>
-                    <div className={`text-3xl font-mono font-bold mb-2 ${portfolioStats.dayChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    <div className={`text-2xl md:text-3xl font-mono font-bold mb-2 ${portfolioStats.dayChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {portfolioStats.dayChange >= 0 ? '+' : ''}{formatCurrency(portfolioStats.dayChange)}
                     </div>
                     <div className="text-xs text-slate-500">
@@ -379,12 +398,38 @@ const DashboardView = ({ positions, stocks, cash, totalEquity, totalMarketValue,
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            {/* 持倉排行與圖表 */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8">
                 {/* 左側：資產配置 */}
                 <div className="lg:col-span-1 flex flex-col gap-6">
                     <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5">
                          <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2"><PieChart size={16} className="text-indigo-400"/> 資產分佈</h3>
                          <AllocationChart positions={positions} stocks={stocks} cash={cash} />
+                    </div>
+                    
+                    {/* 新增: 零成本庫存區塊 (需求2) */}
+                    <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-5">
+                        <h3 className="text-sm font-bold text-amber-400 mb-4 flex items-center gap-2"><Gift size={16} /> 零成本 / 獲利股庫存</h3>
+                        {zeroCostHoldings.length > 0 ? (
+                            <div className="space-y-3">
+                                {zeroCostHoldings.map(item => (
+                                    <div key={item.symbol} className="flex justify-between items-center border-b border-slate-800/50 pb-2 last:border-0 last:pb-0" onClick={() => onSelectStock(item.symbol)}>
+                                        <div>
+                                            <div className="font-bold text-white text-sm">{item.symbol}</div>
+                                            <div className="text-xs text-slate-500">{item.shares} 股</div>
+                                        </div>
+                                        <div className="text-right">
+                                            <div className="font-mono text-emerald-400 text-sm">+{formatCurrency(item.marketValue)}</div>
+                                            <div className="text-[10px] text-slate-600">面額: {formatCurrency(item.faceValue)}</div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-center py-4 text-slate-600 text-xs">
+                                尚無零成本庫存
+                            </div>
+                        )}
                     </div>
                 </div>
 
@@ -392,20 +437,20 @@ const DashboardView = ({ positions, stocks, cash, totalEquity, totalMarketValue,
                 <div className="lg:col-span-2 bg-slate-900/50 border border-slate-800 rounded-xl p-5 flex flex-col">
                     <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2"><TrophyIcon size={16} className="text-amber-400"/> 持倉表現排行</h3>
                     
-                    <div className="flex-1 overflow-auto">
-                        <table className="w-full text-left text-sm">
+                    <div className="flex-1 overflow-x-auto">
+                        <table className="w-full text-left text-sm min-w-[300px]">
                             <thead>
                                 <tr className="text-xs text-slate-500 border-b border-slate-800">
-                                    <th className="pb-2 font-medium">代號</th>
+                                    <th className="pb-2 font-medium pl-2">代號</th>
                                     <th className="pb-2 font-medium text-right">現價</th>
                                     <th className="pb-2 font-medium text-right">總損益</th>
-                                    <th className="pb-2 font-medium text-right">報酬率</th>
+                                    <th className="pb-2 font-medium text-right pr-2">報酬率</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-800/50">
                                 {sortedHoldings.map((item) => (
                                     <tr key={item.symbol} className="group hover:bg-slate-800/50 transition-colors cursor-pointer" onClick={() => onSelectStock(item.symbol)}>
-                                        <td className="py-3 font-bold text-white flex items-center gap-2">
+                                        <td className="py-3 pl-2 font-bold text-white flex items-center gap-2">
                                             {item.symbol}
                                             {item.change >= 0 ? <TrendingUp size={12} className="text-emerald-500"/> : <TrendingDown size={12} className="text-rose-500"/>}
                                         </td>
@@ -413,7 +458,7 @@ const DashboardView = ({ positions, stocks, cash, totalEquity, totalMarketValue,
                                         <td className={`py-3 text-right font-mono font-medium ${item.pl >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                             {item.pl >= 0 ? '+' : ''}{formatCurrency(item.pl)}
                                         </td>
-                                        <td className={`py-3 text-right font-mono ${item.plPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                        <td className={`py-3 pr-2 text-right font-mono ${item.plPercent >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                             {formatPercent(item.plPercent)}
                                         </td>
                                     </tr>
@@ -470,7 +515,7 @@ const CandleChart = ({ data, avgCost, dataStatus, onRetry, dataSource }) => {
 
   if (!data || data.length === 0) {
     return (
-      <div className="h-72 flex flex-col items-center justify-center text-slate-600 bg-slate-900/30 rounded-xl border border-slate-800 border-dashed">
+      <div className="h-64 md:h-80 flex flex-col items-center justify-center text-slate-600 bg-slate-900/30 rounded-xl border border-slate-800 border-dashed">
         <BarChart3 className="mb-2 opacity-50" />
         <span className="text-sm">暫無 K 線資料</span>
       </div>
@@ -617,7 +662,8 @@ const CandleChart = ({ data, avgCost, dataStatus, onRetry, dataSource }) => {
                 </button>
              )}
         </div>
-        <div className="flex flex-col h-80 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+        {/* Height changed for mobile optimization */}
+        <div className="flex flex-col h-64 md:h-80 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
             <div className="flex flex-1 relative min-h-0">
                 <div className={`flex-1 relative overflow-hidden ${dragState.isDragging && dragState.mode === 'pan' ? 'cursor-grabbing' : 'cursor-grab'}`} onMouseDown={(e) => handleMouseDown(e, 'pan')}>
                     {costY !== null && (
@@ -752,7 +798,7 @@ const SettingsModal = ({ isOpen, onClose, apiKey, setApiKey, dataSource, setData
   if (!isOpen) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-md shadow-2xl">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 md:p-6 w-full max-w-md shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex justify-between items-center mb-4">
           <h3 className="text-xl font-bold text-white flex items-center gap-2"><Settings size={20} className="text-indigo-400" /> 資料設定</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={24} /></button>
@@ -817,8 +863,8 @@ const HistoryModal = ({ isOpen, onClose, transactions }) => {
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[85vh]">
-        <div className="p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900 rounded-t-xl z-10">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="p-4 md:p-6 border-b border-slate-800 flex justify-between items-center bg-slate-900 rounded-t-xl z-10">
           <h3 className="text-xl font-bold text-white flex items-center gap-2"><History size={20} className="text-indigo-400" /> 交易歷史回顧</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={24} /></button>
         </div>
@@ -861,7 +907,7 @@ const WalletModal = ({ isOpen, onClose, cash, onTransaction }) => {
   };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-       <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-sm shadow-2xl">
+       <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 md:p-6 w-full max-w-sm shadow-2xl">
           <div className="flex justify-between items-center mb-6">
             <h3 className="text-xl font-bold text-white flex items-center gap-2"><Wallet size={20} className="text-emerald-400" /> 資金管理</h3>
             <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={24} /></button>
@@ -895,7 +941,7 @@ const ZeroCostModal = ({ isOpen, onClose, symbol, zeroCostData, onSave }) => {
   const handleSubmit = (e) => { e.preventDefault(); onSave(symbol, parseFloat(shares) || 0, parseFloat(faceValue) || 0); onClose(); };
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-xl p-6 w-full max-w-sm shadow-2xl">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl p-4 md:p-6 w-full max-w-sm shadow-2xl">
         <div className="flex justify-between items-center mb-6">
           <h3 className="text-xl font-bold text-white flex items-center gap-2"><Gift size={20} className="text-amber-400" /> 零成本 / 獲利股設定</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-white"><X size={24} /></button>
@@ -925,9 +971,9 @@ const PortfolioEditorModal = ({ isOpen, onClose, cash, setCash, positions, setPo
   if (!isOpen) return null;
   return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[85vh]">
-              <div className="p-6 border-b border-slate-800 flex justify-between items-center"><h3 className="text-xl font-bold text-white flex items-center gap-2"><Edit size={20} className="text-indigo-400" /> 編輯資產</h3><button onClick={onClose} className="text-slate-400 hover:text-white"><X size={24} /></button></div>
-              <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
+              <div className="p-4 md:p-6 border-b border-slate-800 flex justify-between items-center"><h3 className="text-xl font-bold text-white flex items-center gap-2"><Edit size={20} className="text-indigo-400" /> 編輯資產</h3><button onClick={onClose} className="text-slate-400 hover:text-white"><X size={24} /></button></div>
+              <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
                   <div>
                       <h4 className="text-sm font-bold text-emerald-400 mb-3 uppercase tracking-wider">現金餘額</h4>
                       <div className="flex items-center gap-3"><div className="p-2 bg-emerald-900/30 rounded text-emerald-400"><DollarSign size={20}/></div><input type="number" value={localCash} onChange={e => setLocalCash(e.target.value)} className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-white font-mono focus:ring-2 focus:ring-emerald-500 outline-none" /></div>
@@ -948,9 +994,9 @@ const PortfolioEditorModal = ({ isOpen, onClose, cash, setCash, positions, setPo
                       </div>
                   </div>
               </div>
-              <div className="p-6 border-t border-slate-800 bg-slate-900 rounded-b-xl flex justify-end gap-3">
+              <div className="p-4 md:p-6 border-t border-slate-800 bg-slate-900 rounded-b-xl flex justify-end gap-3">
                   <button onClick={onClose} className="px-4 py-2 text-slate-300 hover:text-white transition-colors">取消</button>
-                  <button onClick={() => { setCash(parseFloat(localCash)||0); setPositions(localPositions); onClose(); }} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold transition-colors">儲存變更</button>
+                  <button onClick={handleSave} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg font-bold transition-colors">儲存變更</button>
               </div>
           </div>
       </div>
@@ -1289,10 +1335,10 @@ export default function StockTrackerApp() {
       <main className="flex-1 flex flex-col min-w-0 bg-slate-950 overflow-y-auto relative">
         <div className="md:hidden p-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-950/80 backdrop-blur z-10"><button onClick={() => setIsSidebarOpen(true)}><Menu className="text-white" /></button><span className="font-bold">{selectedSymbol || '總覽'}</span><div className="w-6" /></div>
         {selectedSymbol ? (
-          <div className="p-6 lg:p-10 max-w-6xl mx-auto w-full space-y-8">
+          <div className="p-4 md:p-6 lg:p-10 max-w-6xl mx-auto w-full space-y-6 md:space-y-8">
             <div className="flex flex-col md:flex-row justify-between md:items-end gap-6">
-              <div><div className="flex items-baseline gap-3"><h2 className="text-5xl font-bold text-white tracking-tight">{currentStock.symbol}</h2><span className="text-xl text-slate-400">{currentStock.name}</span></div><div className="mt-2 flex gap-2 text-sm text-slate-500"><span className="bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">Daily Candles</span><span className="flex items-center gap-1"><Calendar size={14}/> {new Date().toISOString().split('T')[0]}</span></div></div>
-              <div className="text-right"><div className="text-5xl font-mono text-white">{formatCurrency(currentStock.price)}</div><div className={`text-xl font-medium mt-1 flex items-center justify-end gap-2 ${isUp ? 'text-emerald-400' : 'text-rose-400'}`}>{isUp ? '+' : ''}{currentStock.change.toFixed(2)}%{isUp ? <TrendingUp size={24} /> : <TrendingDown size={24} />}</div></div>
+              <div><div className="flex items-baseline gap-3"><h2 className="text-3xl md:text-5xl font-bold text-white tracking-tight">{currentStock.symbol}</h2><span className="text-lg md:text-xl text-slate-400">{currentStock.name}</span></div><div className="mt-2 flex gap-2 text-sm text-slate-500"><span className="bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">Daily Candles</span><span className="flex items-center gap-1"><Calendar size={14}/> {new Date().toISOString().split('T')[0]}</span></div></div>
+              <div className="text-right"><div className="text-3xl md:text-5xl font-mono text-white">{formatCurrency(currentStock.price)}</div><div className={`text-xl font-medium mt-1 flex items-center justify-end gap-2 ${isUp ? 'text-emerald-400' : 'text-rose-400'}`}>{isUp ? '+' : ''}{currentStock.change.toFixed(2)}%{isUp ? <TrendingUp size={24} /> : <TrendingDown size={24} />}</div></div>
             </div>
             <div className="bg-slate-900/50 border border-slate-800 rounded-lg p-3">
                <div className="text-xs text-indigo-400 font-bold mb-2 flex items-center gap-2"><Newspaper size={14} /> 最新快訊</div>
@@ -1300,7 +1346,7 @@ export default function StockTrackerApp() {
             </div>
             <div className="bg-gradient-to-br from-slate-900 to-slate-900/50 rounded-xl border border-slate-800 relative overflow-hidden">
                <div className="absolute top-0 right-0 p-8 opacity-5 pointer-events-none"><Briefcase size={120} /></div>
-               <div className="p-6">
+               <div className="p-4 md:p-6">
                  <div className="flex items-center gap-2 mb-6"><h3 className="text-xl font-bold text-white flex items-center gap-2"><Briefcase className="text-indigo-400" size={24} /> 我的倉位詳情</h3></div>
                  {currentPosition && currentPosition.shares > 0 ? (
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mb-6">
@@ -1337,7 +1383,15 @@ export default function StockTrackerApp() {
                </div>
             </div>
             <div className="bg-slate-900/50 p-1 rounded-xl border border-slate-800/50 relative">
-               <div className="p-4 flex justify-between items-center"><h3 className="text-lg font-bold text-white flex items-center gap-2"><BarChart3 className="text-indigo-400" size={20} /> 價格走勢 (Interactive)</h3><div className="text-xs text-slate-500">{apiKey ? '資料來源: Finnhub' : '資料來源: 模擬生成'}</div></div>
+               <div className="p-4 flex justify-between items-center">
+                 <h3 className="text-lg font-bold text-white flex items-center gap-2"><BarChart3 className="text-indigo-400" size={20} /> 價格走勢 (Interactive)</h3>
+                 {/* 修正資料來源標註邏輯 (需求1) */}
+                 <div className="text-xs text-slate-500 text-right">
+                   {dataStatus[selectedSymbol] === 'REAL' 
+                     ? (dataSource === 'YAHOO' ? '資料來源: Yahoo Finance' : '資料來源: Finnhub API')
+                     : '資料來源: 模擬生成 (Simulation)'}
+                 </div>
+               </div>
                <div className="px-4 pb-4 relative">
                  {isLoading && <div className="absolute inset-x-4 inset-y-0 bottom-4 z-50 flex flex-col items-center justify-center bg-slate-900/60 backdrop-blur-sm rounded-xl"><div className="w-48 h-1 bg-slate-700 rounded-full overflow-hidden mb-3"><div className="h-full bg-indigo-500 animate-[progress_1.5s_ease-in-out_infinite]" style={{ width: '50%' }}></div></div><div className="flex items-center gap-2 text-indigo-300 text-sm font-medium animate-pulse"><Loader2 className="animate-spin" size={16}/> 正在同步市場數據...</div></div>}
                  <CandleChart data={currentCandles} avgCost={currentPosition?.cost} dataStatus={dataStatus[selectedSymbol]} dataSource={dataSource} onRetry={() => fetchMarketData(true)} />
