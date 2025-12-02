@@ -39,7 +39,11 @@ import {
   AlertTriangle,
   Globe,
   Home,
-  BarChart2
+  BarChart2,
+  Sparkles,
+  Key,
+  Eye, // 用於觀測站
+  Target // 用於目標價
 } from 'lucide-react';
 
 // --- 系統設定與預設資料 ---
@@ -197,7 +201,7 @@ const fetchYahooCandles = async (symbol) => {
     return { error: 'Proxy 連線逾時或失敗' };
 };
 
-// 新增: 輕量級 Yahoo Quote 抓取
+// 輕量級 Yahoo Quote 抓取
 const fetchYahooQuote = async (symbol) => {
     const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=1d&interval=1d`;
     const proxyGenerators = [
@@ -266,14 +270,28 @@ const fetchCompanyNews = async (symbol, apiKey, dataSource) => {
   return null;
 };
 
-// --- 組件定義 (按照依賴順序排列) ---
+const fetchGeminiNews = async (apiKey) => {
+    if (!apiKey) return { error: '請輸入 Gemini API Key' };
+    const prompt = `請扮演一位專業的國際財經分析師。請搜尋並整理目前全球最重要的 10 則財經新聞。需求：1. 繁體中文回應。2. 涵蓋美股、總經、科技、亞洲市場等重要領域。3. 請以 JSON 陣列格式輸出，不要有 Markdown 代碼標記。4. 格式: [{"title": "...", "summary": "...", "impact": "...", "timestamp": "..."}]`;
+    try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+        });
+        if (!response.ok) { const err = await response.json(); throw new Error(err.error?.message || 'API 請求失敗'); }
+        const data = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!text) throw new Error('無內容回應');
+        const jsonString = text.replace(/```json/g, '').replace(/```/g, '').trim();
+        return { success: true, data: JSON.parse(jsonString) };
+    } catch (error) { console.error("Gemini API Error:", error); return { error: error.message || '生成失敗' }; }
+};
 
-// 1. TrophyIcon (無依賴)
+// --- 組件定義 ---
+
 const TrophyIcon = ({size, className}) => (
     <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
 );
 
-// 2. AllocationChart (無依賴)
 const AllocationChart = ({ positions, stocks, cash }) => {
     const data = useMemo(() => {
         let total = cash;
@@ -330,7 +348,6 @@ const AllocationChart = ({ positions, stocks, cash }) => {
     );
 };
 
-// 3. CandleChart (無依賴)
 const CandleChart = ({ data, avgCost, dataStatus, onRetry, dataSource }) => {
   const containerRef = useRef(null);
   const [hoverInfo, setHoverInfo] = useState(null);
@@ -368,7 +385,6 @@ const CandleChart = ({ data, avgCost, dataStatus, onRetry, dataSource }) => {
   const visibleMA20 = ma20Data.slice(startIndex, endIndex);
   const visibleMA60 = ma60Data.slice(startIndex, endIndex);
 
-  // 計算顯示數據
   const latestData = visibleData[visibleData.length - 1] || {};
   const displayData = hoverInfo ? hoverInfo.data : latestData;
   const latestMA5 = visibleMA5[visibleMA5.length - 1]?.v;
@@ -378,7 +394,6 @@ const CandleChart = ({ data, avgCost, dataStatus, onRetry, dataSource }) => {
   const latestMA60 = visibleMA60[visibleMA60.length - 1]?.v;
   const displayMA60 = hoverInfo ? hoverInfo.ma60 : latestMA60;
 
-  // Events
   const handleMouseDown = (e, mode) => { e.preventDefault(); setDragState({ isDragging: true, mode: mode, startX: e.clientX, startY: e.clientY, startOffset: safeOffsetEnd, startVisibleCount: safeVisibleCount, startPadding: yScalePadding, startDistance: 0 }); };
   const handleMouseMove = (e) => {
     const rect = containerRef.current.getBoundingClientRect();
@@ -506,7 +521,7 @@ const CandleChart = ({ data, avgCost, dataStatus, onRetry, dataSource }) => {
   );
 };
 
-// 4. DashboardView (依賴 AllocationChart, TrophyIcon)
+// 4. DashboardView
 const DashboardView = ({ positions, stocks, cash, totalEquity, totalMarketValue, onSelectStock }) => {
     const portfolioStats = useMemo(() => {
         let totalCost = 0; let dayChange = 0;
@@ -587,7 +602,225 @@ const DashboardView = ({ positions, stocks, cash, totalEquity, totalMarketValue,
     );
 };
 
-// 5. SettingsModal (無依賴)
+// 5. GlobalNewsView
+const GlobalNewsView = ({ geminiApiKey, setGeminiApiKey }) => {
+    const [loading, setLoading] = useState(false);
+    const [newsData, setNewsData] = useState(() => {
+        const saved = localStorage.getItem('global_financial_news');
+        return saved ? JSON.parse(saved) : [];
+    });
+    const [localKey, setLocalKey] = useState(geminiApiKey);
+
+    const handleGenerateNews = async () => {
+        if (!geminiApiKey && !localKey) {
+            alert('請先輸入 Google Gemini API Key');
+            return;
+        }
+        const keyToUse = geminiApiKey || localKey;
+        if (keyToUse !== geminiApiKey) {
+            setGeminiApiKey(keyToUse);
+        }
+
+        setLoading(true);
+        const result = await fetchGeminiNews(keyToUse);
+        setLoading(false);
+
+        if (result.success) {
+            setNewsData(result.data);
+            localStorage.setItem('global_financial_news', JSON.stringify(result.data));
+        } else {
+            alert(result.error);
+        }
+    };
+
+    return (
+        <div className="p-4 md:p-6 lg:p-10 max-w-4xl mx-auto w-full space-y-8 animate-in fade-in duration-500">
+            <div>
+                <h2 className="text-2xl md:text-3xl font-bold text-white mb-2 flex items-center gap-2">
+                    <Sparkles className="text-amber-400" /> 國際財經 AI 日報
+                </h2>
+                <p className="text-slate-400 text-sm">由 Google Gemini 3.0 模型驅動，為您整理最新全球市場動態</p>
+            </div>
+
+            <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6">
+                <div className="flex flex-col md:flex-row gap-4 items-end">
+                    <div className="flex-1 w-full">
+                        <label className="block text-xs font-medium text-slate-400 mb-1">Google AI Studio API Key</label>
+                        <div className="relative">
+                            <Key className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+                            <input 
+                                type="password" 
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-10 pr-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none placeholder-slate-600"
+                                placeholder="輸入您的 API Key"
+                                value={localKey}
+                                onChange={(e) => setLocalKey(e.target.value)}
+                            />
+                        </div>
+                    </div>
+                    <button 
+                        onClick={handleGenerateNews}
+                        disabled={loading}
+                        className="w-full md:w-auto px-6 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 disabled:text-slate-500 text-white rounded-lg font-bold transition-colors flex items-center justify-center gap-2"
+                    >
+                        {loading ? <Loader2 className="animate-spin" size={18} /> : <Sparkles size={18} />}
+                        {loading ? 'AI 生成中...' : '生成/更新新聞'}
+                    </button>
+                </div>
+                <div className="mt-2 text-[10px] text-slate-500">
+                    * 您的 API Key 僅儲存於本地瀏覽器，不會上傳至伺服器。
+                    <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-indigo-400 hover:underline ml-1">取得 API Key</a>
+                </div>
+            </div>
+
+            <div className="space-y-4">
+                {newsData.length > 0 ? (
+                    newsData.map((item, idx) => (
+                        <div key={idx} className="bg-slate-900 border border-slate-800 rounded-xl p-5 hover:border-indigo-500/50 transition-colors group">
+                            <div className="flex justify-between items-start gap-4 mb-2">
+                                <h3 className="text-lg font-bold text-white group-hover:text-indigo-300 transition-colors">{item.title}</h3>
+                                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-1 rounded whitespace-nowrap">{item.timestamp}</span>
+                            </div>
+                            <p className="text-slate-300 text-sm leading-relaxed mb-3">{item.summary}</p>
+                            <div className="flex items-center gap-2 text-xs">
+                                <span className="text-slate-500">影響領域:</span>
+                                <span className="text-emerald-400 bg-emerald-900/20 px-2 py-0.5 rounded border border-emerald-900/30">{item.impact}</span>
+                            </div>
+                        </div>
+                    ))
+                ) : (
+                    <div className="text-center py-12 text-slate-600 bg-slate-900/30 rounded-xl border border-slate-800 border-dashed">
+                        <Newspaper size={48} className="mx-auto mb-4 opacity-20" />
+                        <p>尚無新聞資料，請輸入 API Key 並點擊生成按鈕。</p>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// 6. WatchlistStationView (新功能: 觀測站)
+const WatchlistStationView = ({ watchlist, setWatchlist, stocks }) => {
+    const [newSymbol, setNewSymbol] = useState('');
+    const [targetPrice, setTargetPrice] = useState('');
+
+    const handleAdd = () => {
+        if (!newSymbol || !targetPrice) return;
+        const symbol = newSymbol.toUpperCase();
+        // 如果已存在，覆蓋舊的目標價
+        const filtered = watchlist.filter(w => w.symbol !== symbol);
+        const newItem = { symbol, targetPrice: parseFloat(targetPrice) };
+        setWatchlist([...filtered, newItem]);
+        setNewSymbol('');
+        setTargetPrice('');
+    };
+
+    const handleDelete = (symbol) => {
+        setWatchlist(watchlist.filter(w => w.symbol !== symbol));
+    };
+
+    return (
+        <div className="p-4 md:p-6 lg:p-10 max-w-4xl mx-auto w-full space-y-8 animate-in fade-in duration-500">
+            <div>
+                <h2 className="text-2xl md:text-3xl font-bold text-white mb-2 flex items-center gap-2">
+                    <Eye className="text-cyan-400" /> 價格觀測站
+                </h2>
+                <p className="text-slate-400 text-sm">設定您的目標價格，系統將自動計算當前價格與目標的差距</p>
+            </div>
+
+            {/* Add Section */}
+            <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-6 flex flex-col md:flex-row gap-4 items-end">
+                <div className="flex-1 w-full">
+                    <label className="block text-xs font-medium text-slate-400 mb-1">股票代號 (Symbol)</label>
+                    <input 
+                        type="text" 
+                        className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none placeholder-slate-600 uppercase"
+                        placeholder="例如: AMD"
+                        value={newSymbol}
+                        onChange={(e) => setNewSymbol(e.target.value)}
+                    />
+                </div>
+                <div className="flex-1 w-full">
+                    <label className="block text-xs font-medium text-slate-400 mb-1">目標觀察價 (Target Price)</label>
+                    <div className="relative">
+                        <DollarSign className="absolute left-3 top-2.5 w-4 h-4 text-slate-500" />
+                        <input 
+                            type="number" 
+                            className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-9 pr-4 py-2 text-white focus:ring-2 focus:ring-indigo-500 outline-none placeholder-slate-600"
+                            placeholder="0.00"
+                            value={targetPrice}
+                            onChange={(e) => setTargetPrice(e.target.value)}
+                        />
+                    </div>
+                </div>
+                <button 
+                    onClick={handleAdd}
+                    className="w-full md:w-auto px-6 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg font-bold transition-colors flex items-center justify-center gap-2"
+                >
+                    <Plus size={18} /> 加入觀測
+                </button>
+            </div>
+
+            {/* Watchlist Table */}
+            <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full text-left text-sm">
+                        <thead>
+                            <tr className="bg-slate-800/50 text-xs text-slate-400 border-b border-slate-700">
+                                <th className="px-6 py-3 font-medium uppercase">代號</th>
+                                <th className="px-6 py-3 font-medium text-right uppercase">現價</th>
+                                <th className="px-6 py-3 font-medium text-right uppercase">目標價</th>
+                                <th className="px-6 py-3 font-medium text-right uppercase">差距 (Gap)</th>
+                                <th className="px-6 py-3 font-medium text-right uppercase">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-700/50">
+                            {watchlist.length > 0 ? (
+                                watchlist.map((item) => {
+                                    const stock = stocks.find(s => s.symbol === item.symbol);
+                                    const currentPrice = stock ? stock.price : 0;
+                                    const gap = currentPrice - item.targetPrice;
+                                    const gapPercent = item.targetPrice > 0 ? (gap / item.targetPrice) * 100 : 0;
+                                    const isPositive = gap >= 0;
+                                    
+                                    return (
+                                        <tr key={item.symbol} className="group hover:bg-slate-800/30 transition-colors">
+                                            <td className="px-6 py-4 font-bold text-white">{item.symbol}</td>
+                                            <td className="px-6 py-4 text-right font-mono text-slate-300">
+                                                {currentPrice > 0 ? formatCurrency(currentPrice) : <span className="text-slate-600 italic">更新中...</span>}
+                                            </td>
+                                            <td className="px-6 py-4 text-right font-mono text-cyan-300">{formatCurrency(item.targetPrice)}</td>
+                                            <td className={`px-6 py-4 text-right font-mono font-bold ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                {isPositive ? '+' : ''}{gapPercent.toFixed(2)}%
+                                                <span className="text-[10px] ml-1 opacity-70">({isPositive ? '+' : ''}{gap.toFixed(2)})</span>
+                                            </td>
+                                            <td className="px-6 py-4 text-right">
+                                                <button 
+                                                    onClick={() => handleDelete(item.symbol)}
+                                                    className="p-1.5 hover:bg-slate-700 rounded text-slate-500 hover:text-rose-400 transition-colors"
+                                                    title="移除"
+                                                >
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })
+                            ) : (
+                                <tr>
+                                    <td colSpan="5" className="px-6 py-12 text-center text-slate-500">
+                                        尚無觀測項目，請上方新增。
+                                    </td>
+                                </tr>
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+// 7. SettingsModal (無依賴)
 const SettingsModal = ({ isOpen, onClose, apiKey, setApiKey, dataSource, setDataSource }) => {
   const [localKey, setLocalKey] = useState(apiKey);
   const [localSource, setLocalSource] = useState(dataSource);
@@ -635,7 +868,7 @@ const SettingsModal = ({ isOpen, onClose, apiKey, setApiKey, dataSource, setData
   );
 };
 
-// 6. HistoryModal (無依賴)
+// 8. HistoryModal (無依賴)
 const HistoryModal = ({ isOpen, onClose, transactions }) => {
   if (!isOpen) return null;
   const sortedTransactions = [...transactions].sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -687,7 +920,7 @@ const HistoryModal = ({ isOpen, onClose, transactions }) => {
   );
 };
 
-// 7. WalletModal (無依賴)
+// 9. WalletModal (無依賴)
 const WalletModal = ({ isOpen, onClose, cash, onTransaction }) => {
   const [amount, setAmount] = useState('');
   const [type, setType] = useState('deposit');
@@ -728,7 +961,7 @@ const WalletModal = ({ isOpen, onClose, cash, onTransaction }) => {
   );
 };
 
-// 8. ZeroCostModal (無依賴)
+// 10. ZeroCostModal (無依賴)
 const ZeroCostModal = ({ isOpen, onClose, symbol, zeroCostData, onSave }) => {
   const [shares, setShares] = useState('');
   const [faceValue, setFaceValue] = useState('');
@@ -759,7 +992,7 @@ const ZeroCostModal = ({ isOpen, onClose, symbol, zeroCostData, onSave }) => {
   );
 };
 
-// 9. PortfolioEditorModal (無依賴)
+// 11. PortfolioEditorModal (無依賴)
 const PortfolioEditorModal = ({ isOpen, onClose, cash, setCash, positions, setPositions }) => {
   const [localCash, setLocalCash] = useState(cash);
   const [localPositions, setLocalPositions] = useState(positions);
@@ -816,7 +1049,7 @@ const PortfolioEditorModal = ({ isOpen, onClose, cash, setCash, positions, setPo
   );
 };
 
-// 10. Main App (依賴所有組件)
+// 12. Main App (依賴所有組件)
 export default function StockTrackerApp() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -824,24 +1057,69 @@ export default function StockTrackerApp() {
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isZeroCostModalOpen, setIsZeroCostModalOpen] = useState(false);
   const [isPortfolioEditorOpen, setIsPortfolioEditorOpen] = useState(false);
+  
   const [positions, setPositions] = useState(() => { const saved = localStorage.getItem('stock_positions_v3'); return saved ? JSON.parse(saved) : DEMO_DATA.positions; });
   const [cash, setCash] = useState(() => { const saved = localStorage.getItem('stock_cash_v3'); return saved ? parseFloat(saved) : DEMO_DATA.cash; });
   const [transactions, setTransactions] = useState(() => { const saved = localStorage.getItem('stock_transactions_v3'); return saved ? JSON.parse(saved) : DEMO_DATA.transactions; });
   const [tradeShares, setTradeShares] = useState(''); const [tradePrice, setTradePrice] = useState('');
   const [stocks, setStocks] = useState(() => { const savedPositions = localStorage.getItem('stock_positions_v3'); if (!savedPositions) return INITIAL_MARKET_DATA; const posKeys = Object.keys(JSON.parse(savedPositions)); return posKeys.map(symbol => ({ symbol, name: symbol, price: 0, change: 0 })); });
-  const [selectedSymbol, setSelectedSymbol] = useState(null);
-  const [searchQuery, setSearchQuery] = useState(''); const [candleData, setCandleData] = useState({}); const candleCache = useRef({}); const [dataStatus, setDataStatus] = useState({}); const [stockNews, setStockNews] = useState([]); const [isLoading, setIsLoading] = useState(false);
-  const [apiKey, setApiKey] = useState(() => localStorage.getItem('finnhub_api_key') || ''); const [dataSource, setDataSource] = useState(() => localStorage.getItem('data_source') || 'YAHOO'); 
+  
+  // View State Management
+  // currentView: 'dashboard' | 'global-news' | 'watchlist-station' | 'stock-detail'
+  const [currentView, setCurrentView] = useState('dashboard');
+  const [selectedSymbol, setSelectedSymbol] = useState(null); 
 
+  const [searchQuery, setSearchQuery] = useState(''); 
+  const [candleData, setCandleData] = useState({}); 
+  const candleCache = useRef({}); 
+  const [dataStatus, setDataStatus] = useState({}); 
+  const [stockNews, setStockNews] = useState([]); 
+  const [isLoading, setIsLoading] = useState(false);
+  const [apiKey, setApiKey] = useState(() => localStorage.getItem('finnhub_api_key') || ''); 
+  const [dataSource, setDataSource] = useState(() => localStorage.getItem('data_source') || 'YAHOO');
+  const [geminiApiKey, setGeminiApiKey] = useState(() => localStorage.getItem('gemini_api_key') || '');
+  const [watchlist, setWatchlist] = useState(() => { const saved = localStorage.getItem('stock_watchlist'); return saved ? JSON.parse(saved) : []; });
+
+  // Effects for Persistence
   useEffect(() => { if (apiKey) localStorage.setItem('finnhub_api_key', apiKey); else localStorage.removeItem('finnhub_api_key'); }, [apiKey]);
+  useEffect(() => { if (geminiApiKey) localStorage.setItem('gemini_api_key', geminiApiKey); else localStorage.removeItem('gemini_api_key'); }, [geminiApiKey]);
   useEffect(() => { localStorage.setItem('data_source', dataSource); }, [dataSource]);
   useEffect(() => { localStorage.setItem('stock_positions_v3', JSON.stringify(positions)); }, [positions]);
   useEffect(() => { localStorage.setItem('stock_cash_v3', cash.toString()); }, [cash]);
   useEffect(() => { localStorage.setItem('stock_transactions_v3', JSON.stringify(transactions)); }, [transactions]);
-  useEffect(() => { setTradeShares(''); const current = stocks.find(s => s.symbol === selectedSymbol); if (current) { setTradePrice(current.price); } }, [selectedSymbol, stocks]);
+  useEffect(() => { localStorage.setItem('stock_watchlist', JSON.stringify(watchlist)); }, [watchlist]);
 
+  useEffect(() => { 
+      if (currentView === 'stock-detail' && selectedSymbol) {
+        setTradeShares(''); 
+        const current = stocks.find(s => s.symbol === selectedSymbol); 
+        if (current) { setTradePrice(current.price); } 
+      }
+  }, [currentView, selectedSymbol, stocks]);
+
+  const handleStockSelect = (symbol) => {
+      setSelectedSymbol(symbol);
+      setCurrentView('stock-detail');
+      setIsSidebarOpen(false);
+  };
+
+  const handleViewSwitch = (view) => {
+      setCurrentView(view);
+      if (view !== 'stock-detail') setSelectedSymbol(null);
+      setIsSidebarOpen(false);
+  };
+
+  // --- Fetch Market Data (Updated to include Watchlist) ---
   const fetchMarketData = async (forceRetry = false) => {
-      if (selectedSymbol) setIsLoading(true); const minLoadTime = new Promise(resolve => setTimeout(resolve, 800)); const newCandleData = {}; const newDataStatus = { ...dataStatus }; const symbolsToFetch = Array.from(new Set([...Object.keys(positions), selectedSymbol])).filter(Boolean); const updatedStocksMap = {};
+      if (currentView === 'stock-detail') setIsLoading(true); 
+      const minLoadTime = new Promise(resolve => setTimeout(resolve, 800)); 
+      const newCandleData = {}; const newDataStatus = { ...dataStatus }; 
+      
+      // 整合持倉股票、當前選擇股票、以及觀測站的股票
+      const watchlistSymbols = watchlist.map(w => w.symbol);
+      const symbolsToFetch = Array.from(new Set([...Object.keys(positions), selectedSymbol, ...watchlistSymbols])).filter(Boolean); 
+      const updatedStocksMap = {};
+      
       const fetchPromise = (async () => {
         for (const symbol of symbolsToFetch) {
             const existingStock = stocks.find(s => s.symbol === symbol) || { symbol, name: symbol, price: 0, change: 0 };
@@ -850,38 +1128,17 @@ export default function StockTrackerApp() {
             
             if (useSource === 'FINNHUB' && apiKey) {
                 const quote = await fetchStockQuoteFinnhub(symbol, apiKey); if (quote) { fetchedPrice = quote.price; fetchedChange = quote.change; }
-                if (symbol === selectedSymbol) {
+                if (symbol === selectedSymbol && currentView === 'stock-detail') {
                     if (!forceRetry && candleCache.current[symbol]) { candles = candleCache.current[symbol]; status = 'REAL'; } else {
                         const result = await fetchFinnhubCandles(symbol, apiKey); if (result.success) { candles = result.data; status = 'REAL'; candleCache.current[symbol] = candles; if (!quote) { fetchedPrice = candles[candles.length-1].c; const prev = candles[candles.length-2]; fetchedChange = prev ? ((fetchedPrice - prev.c)/prev.c)*100 : 0; } } else { error = result.error; }
                     }
                 }
             } else if (useSource === 'YAHOO') {
-                // 1. 先抓取 Quote (更新價格，適用於所有持倉)
                 const quote = await fetchYahooQuote(symbol);
-                if (quote) { 
-                    fetchedPrice = quote.price; 
-                    fetchedChange = quote.change; 
-                }
-
-                // 2. 只有選中的股票才抓取 K 線
-                if (symbol === selectedSymbol) {
-                    if (!forceRetry && candleCache.current[symbol]) { 
-                        candles = candleCache.current[symbol]; 
-                        status = 'REAL'; 
-                        // 如果 Quote 失敗但 Cache 有資料，嘗試用 Cache 補救價格
-                        if (!quote) fetchedPrice = candles[candles.length-1].c; 
-                    } else {
-                        const result = await fetchYahooCandles(symbol); 
-                        if (result.success) { 
-                            candles = result.data; 
-                            status = 'REAL'; 
-                            candleCache.current[symbol] = candles; 
-                            // 如果 Quote 失敗，用 K 線最新價格
-                            if (!quote) { 
-                                if (result.price) { fetchedPrice = result.price; fetchedChange = result.change || 0; } 
-                                else { fetchedPrice = candles[candles.length-1].c; const prev = candles[candles.length-2]; fetchedChange = prev ? ((fetchedPrice - prev.c)/prev.c)*100 : 0; } 
-                            }
-                        } else { error = result.error; }
+                if (quote) { fetchedPrice = quote.price; fetchedChange = quote.change; }
+                if (symbol === selectedSymbol && currentView === 'stock-detail') {
+                    if (!forceRetry && candleCache.current[symbol]) { candles = candleCache.current[symbol]; status = 'REAL'; if (!quote) fetchedPrice = candles[candles.length-1].c; } else {
+                        const result = await fetchYahooCandles(symbol); if (result.success) { candles = result.data; status = 'REAL'; candleCache.current[symbol] = candles; if (!quote) { if (result.price) { fetchedPrice = result.price; fetchedChange = result.change || 0; } else { fetchedPrice = candles[candles.length-1].c; const prev = candles[candles.length-2]; fetchedChange = prev ? ((fetchedPrice - prev.c)/prev.c)*100 : 0; } } } else { error = result.error; }
                     }
                 }
             }
@@ -891,17 +1148,32 @@ export default function StockTrackerApp() {
                     const target = fetchedPrice || existingStock.price || 150; candles = generateCandleData(target, 180); status = error || 'MOCK'; fetchedPrice = candles[candles.length-1].c; const prev = candles[candles.length-2]; fetchedChange = ((fetchedPrice - prev.c)/prev.c)*100;
                 }
             }
-            if (symbol === selectedSymbol) { newCandleData[symbol] = candles; newDataStatus[symbol] = status; }
+            if (symbol === selectedSymbol && currentView === 'stock-detail') { newCandleData[symbol] = candles; newDataStatus[symbol] = status; }
             updatedStocksMap[symbol] = { ...existingStock, price: fetchedPrice, change: fetchedChange };
         }
-        setStocks(Object.values(updatedStocksMap)); setCandleData(prev => ({ ...prev, ...newCandleData })); setDataStatus(newDataStatus);
+        
+        // Merge with existing stocks to avoid flickering or losing data not in fetch list (though we fetch all active)
+        // Actually, simple replacement is safer here since we build from all active sources
+        setStocks(prev => {
+             // 保留舊有的股票資訊如果這次沒有 fetch 到 (雖然理論上 symbolsToFetch 涵蓋所有需要的)
+             const newStocks = [...prev];
+             Object.values(updatedStocksMap).forEach(updated => {
+                 const idx = newStocks.findIndex(s => s.symbol === updated.symbol);
+                 if (idx >= 0) newStocks[idx] = updated;
+                 else newStocks.push(updated);
+             });
+             return newStocks;
+        });
+
+        setCandleData(prev => ({ ...prev, ...newCandleData })); setDataStatus(newDataStatus);
       })();
       await Promise.all([fetchPromise, minLoadTime]); setIsLoading(false);
   };
-  useEffect(() => { const timer = setTimeout(() => { fetchMarketData(); }, 500); return () => clearTimeout(timer); }, [apiKey, dataSource, positions, selectedSymbol]); 
-  useEffect(() => { const fetchNews = async () => { if (!selectedSymbol) return; const news = await fetchCompanyNews(selectedSymbol, apiKey, dataSource); setStockNews((news && news.length > 0) ? news : (MOCK_NEWS[selectedSymbol] || MOCK_NEWS['DEFAULT'])); }; fetchNews(); }, [selectedSymbol, apiKey, dataSource]);
 
-  const handleAddStock = async () => { if (!searchQuery) return; const symbol = searchQuery.toUpperCase(); if (positions[symbol]) { setSelectedSymbol(symbol); setSearchQuery(''); return; } setIsLoading(true); const newStock = { symbol, name: symbol, price: 150, change: 0 }; setStocks(prev => { if (prev.find(s => s.symbol === symbol)) return prev; return [...prev, newStock]; }); setSelectedSymbol(symbol); setSearchQuery(''); setIsLoading(false); };
+  useEffect(() => { const timer = setTimeout(() => { fetchMarketData(); }, 500); return () => clearTimeout(timer); }, [apiKey, dataSource, positions, selectedSymbol, currentView, watchlist]); 
+  useEffect(() => { const fetchNews = async () => { if (currentView !== 'stock-detail' || !selectedSymbol) return; const news = await fetchCompanyNews(selectedSymbol, apiKey, dataSource); setStockNews((news && news.length > 0) ? news : (MOCK_NEWS[selectedSymbol] || MOCK_NEWS['DEFAULT'])); }; fetchNews(); }, [selectedSymbol, apiKey, dataSource, currentView]);
+
+  const handleAddStock = async () => { if (!searchQuery) return; const symbol = searchQuery.toUpperCase(); if (positions[symbol]) { handleStockSelect(symbol); setSearchQuery(''); return; } setIsLoading(true); const newStock = { symbol, name: symbol, price: 150, change: 0 }; setStocks(prev => { if (prev.find(s => s.symbol === symbol)) return prev; return [...prev, newStock]; }); handleStockSelect(symbol); setSearchQuery(''); setIsLoading(false); };
   const logTransaction = (type, amount, details = {}) => { const newBalance = type === 'buy' || type === 'withdraw' ? cash - amount : cash + amount; const newTx = { id: `tx_${Date.now()}`, date: new Date().toISOString(), type, amount, balance: newBalance, ...details }; setTransactions(prev => [newTx, ...prev]); };
   const handleWalletTransaction = (type, amount) => { if (type === 'deposit') { setCash(prev => prev + amount); logTransaction('deposit', amount); } else { setCash(prev => prev - amount); logTransaction('withdraw', amount); } };
   const handleQuickTrade = (type) => { const symbol = selectedSymbol; const quantity = parseFloat(tradeShares); const price = parseFloat(tradePrice); if (!quantity || quantity <= 0 || !price || price <= 0) return; const totalAmount = quantity * price; if (type === 'buy') { if (cash < totalAmount) { alert('現金餘額不足！'); return; } setPositions(prev => { const currentPos = prev[symbol] || { shares: 0, cost: 0, zeroCost: { shares: 0, faceValue: 0 } }; const newShares = currentPos.shares + quantity; const newCost = ((currentPos.shares * currentPos.cost) + totalAmount) / newShares; return { ...prev, [symbol]: { ...currentPos, shares: newShares, cost: newCost } }; }); setCash(prev => prev - totalAmount); logTransaction('buy', totalAmount, { symbol, shares: quantity, price: price }); setTradeShares(''); } else { const currentPos = positions[symbol]; if (!currentPos || currentPos.shares < quantity) { alert('持倉不足！'); return; } setPositions(prev => { const newShares = currentPos.shares - quantity; if (newShares <= 0 && (!currentPos.zeroCost || currentPos.zeroCost.shares <= 0)) { const next = { ...prev }; delete next[symbol]; return next; } else { return { ...prev, [symbol]: { ...currentPos, shares: Math.max(0, newShares) } }; } }); setCash(prev => prev + totalAmount); logTransaction('sell', totalAmount, { symbol, shares: quantity, price: price }); setTradeShares(''); } };
@@ -910,6 +1182,7 @@ export default function StockTrackerApp() {
   const portfolioStocks = stocks.filter(s => positions[s.symbol]);
   const totalMarketValue = portfolioStocks.reduce((sum, stock) => { const pos = positions[stock.symbol]; const regularVal = pos.shares * stock.price; const zeroCostVal = pos.zeroCost ? pos.zeroCost.shares * stock.price : 0; return sum + regularVal + zeroCostVal; }, 0);
   const totalEquity = cash + totalMarketValue;
+  
   const currentStock = stocks.find(s => s.symbol === selectedSymbol) || { symbol: '', name: '', price: 0, change: 0 };
   const currentCandles = candleData[selectedSymbol] || [];
   const isUp = currentStock.change >= 0;
@@ -935,17 +1208,58 @@ export default function StockTrackerApp() {
             <div className="grid grid-cols-2 gap-2"><div onClick={() => setIsWalletModalOpen(true)} className="bg-slate-800/50 p-2 rounded border border-slate-700 cursor-pointer hover:bg-slate-800 transition-colors group"><div className="text-[10px] text-slate-500 uppercase mb-1 flex items-center gap-1 group-hover:text-emerald-400"><DollarSign size={10} /> 現金餘額</div><div className="font-mono text-sm font-semibold text-emerald-400">{formatCurrency(cash)}</div></div><div className="bg-slate-800/50 p-2 rounded border border-slate-700"><div className="text-[10px] text-slate-500 uppercase mb-1 flex items-center gap-1"><PieChart size={10} /> 股票市值</div><div className="font-mono text-sm font-semibold text-indigo-400">{formatCurrency(totalMarketValue)}</div></div></div>
             <AllocationChart positions={positions} stocks={stocks} cash={cash} />
         </div>
-        <div className="p-4 border-b border-slate-800/50">
-          <button onClick={() => { setSelectedSymbol(null); setIsSidebarOpen(false); }} className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors mb-4 ${selectedSymbol === null ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}><Home size={18} /><span className="font-medium text-sm">總覽儀表板 (Dashboard)</span></button>
-          <div className="relative group"><Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" /><input type="text" placeholder="搜尋代號 (如 AMD)" className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-10 pr-10 py-2 focus:border-indigo-500 outline-none text-white text-sm" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleAddStock()} /><button onClick={handleAddStock} className="absolute right-2 top-2 p-0.5 hover:bg-slate-700 rounded text-slate-400"><Plus size={16} /></button></div>
+        
+        {/* Navigation Buttons */}
+        <div className="p-4 border-b border-slate-800/50 space-y-2">
+          <button 
+             onClick={() => handleViewSwitch('global-news')}
+             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${currentView === 'global-news' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+          >
+              <Sparkles size={18} />
+              <span className="font-medium text-sm">國際財經新聞 (AI)</span>
+          </button>
+
+          {/* 新增: 觀測站按鈕 */}
+          <button 
+             onClick={() => handleViewSwitch('watchlist-station')}
+             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${currentView === 'watchlist-station' ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+          >
+              <Eye size={18} />
+              <span className="font-medium text-sm">價格觀測站</span>
+          </button>
+          
+          <button 
+             onClick={() => handleViewSwitch('dashboard')}
+             className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors ${currentView === 'dashboard' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-900/20' : 'text-slate-400 hover:bg-slate-800 hover:text-white'}`}
+          >
+              <Home size={18} />
+              <span className="font-medium text-sm">總覽儀表板 (Dashboard)</span>
+          </button>
+
+          <div className="relative group pt-2">
+            <Search className="absolute left-3 top-4.5 w-4 h-4 text-slate-400" />
+            <input 
+                type="text" 
+                placeholder="搜尋代號 (如 AMD)" 
+                className="w-full bg-slate-800 border border-slate-700 rounded-lg pl-10 pr-10 py-2 focus:border-indigo-500 outline-none text-white text-sm" 
+                value={searchQuery} 
+                onChange={(e) => setSearchQuery(e.target.value)} 
+                onKeyDown={(e) => e.key === 'Enter' && handleAddStock()} 
+            />
+            <button onClick={handleAddStock} className="absolute right-2 top-4.5 p-0.5 hover:bg-slate-700 rounded text-slate-400"><Plus size={16} /></button>
+          </div>
         </div>
+
         <div className="flex-1 px-2 space-y-1 py-2">
            <div className="px-2 pb-2 text-xs font-semibold text-slate-500 uppercase flex justify-between"><span>持倉部位 ({portfolioStocks.length})</span>{isLoading && <RefreshCw size={12} className="animate-spin text-indigo-400" />}</div>
            {portfolioStocks.length === 0 && <div className="text-center py-8 text-slate-500 text-xs">無持倉</div>}
            {portfolioStocks.map(stock => {
-             const active = stock.symbol === selectedSymbol; const pos = positions[stock.symbol]; const up = stock.change >= 0; const totalVal = (pos.shares * stock.price) + (pos.zeroCost ? pos.zeroCost.shares * stock.price : 0);
+             const active = stock.symbol === selectedSymbol && currentView === 'stock-detail'; 
+             const pos = positions[stock.symbol]; 
+             const up = stock.change >= 0; 
+             const totalVal = (pos.shares * stock.price) + (pos.zeroCost ? pos.zeroCost.shares * stock.price : 0);
              return (
-               <button key={stock.symbol} onClick={() => { setSelectedSymbol(stock.symbol); setIsSidebarOpen(false); }} className={`w-full flex justify-between items-center p-3 rounded-lg transition-all ${active ? 'bg-indigo-900/40 border border-indigo-500/30' : 'hover:bg-slate-800 border border-transparent'} group`}>
+               <button key={stock.symbol} onClick={() => handleStockSelect(stock.symbol)} className={`w-full flex justify-between items-center p-3 rounded-lg transition-all ${active ? 'bg-indigo-900/40 border border-indigo-500/30' : 'hover:bg-slate-800 border border-transparent'} group`}>
                  <div className="text-left"><div className="flex items-center gap-2"><span className="font-bold text-sm text-white group-hover:text-indigo-300 transition-colors">{stock.symbol}</span>{pos.zeroCost && pos.zeroCost.shares > 0 && <div className="w-1.5 h-1.5 rounded-full bg-amber-400" title="含零成本部位"></div>}</div><div className="text-xs text-slate-400">{pos.shares + (pos.zeroCost?.shares || 0)} 股</div></div>
                  <div className="text-right"><div className="font-mono text-sm font-medium text-white">{formatCurrency(totalVal)}</div><div className={`text-xs flex items-center justify-end ${up ? 'text-emerald-400' : 'text-rose-400'}`}>{formatPercent(stock.change)}</div></div>
                </button>
@@ -959,8 +1273,22 @@ export default function StockTrackerApp() {
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0 bg-slate-950 overflow-y-auto relative">
-        <div className="md:hidden p-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-950 z-10"><button onClick={() => setIsSidebarOpen(true)}><Menu className="text-white" /></button><span className="font-bold">{selectedSymbol || '總覽'}</span><div className="w-6" /></div>
-        {selectedSymbol ? (
+        <div className="md:hidden p-4 border-b border-slate-800 flex items-center justify-between sticky top-0 bg-slate-950 z-10"><button onClick={() => setIsSidebarOpen(true)}><Menu className="text-white" /></button><span className="font-bold">{currentView === 'dashboard' ? '總覽儀表板' : currentView === 'global-news' ? '國際財經新聞' : currentView === 'watchlist-station' ? '價格觀測站' : selectedSymbol}</span><div className="w-6" /></div>
+        
+        {currentView === 'dashboard' && (
+             <DashboardView positions={positions} stocks={stocks} cash={cash} totalEquity={totalEquity} totalMarketValue={totalMarketValue} onSelectStock={handleStockSelect} />
+        )}
+
+        {currentView === 'global-news' && (
+             <GlobalNewsView geminiApiKey={geminiApiKey} setGeminiApiKey={setGeminiApiKey} />
+        )}
+
+        {/* 新增: 觀測站視圖 */}
+        {currentView === 'watchlist-station' && (
+             <WatchlistStationView watchlist={watchlist} setWatchlist={setWatchlist} stocks={stocks} />
+        )}
+
+        {currentView === 'stock-detail' && selectedSymbol && (
           <div className="p-4 md:p-6 lg:p-10 max-w-6xl mx-auto w-full space-y-6 md:space-y-8">
             <div className="flex flex-col md:flex-row justify-between md:items-end gap-6">
               <div><div className="flex items-baseline gap-3"><h2 className="text-3xl md:text-5xl font-bold text-white tracking-tight">{currentStock.symbol}</h2><span className="text-lg md:text-xl text-slate-400">{currentStock.name}</span></div><div className="mt-2 flex gap-2 text-sm text-slate-500"><span className="bg-slate-900 border border-slate-800 px-2 py-0.5 rounded">Daily Candles</span><span className="flex items-center gap-1"><Calendar size={14}/> {new Date().toISOString().split('T')[0]}</span></div></div>
@@ -1018,8 +1346,6 @@ export default function StockTrackerApp() {
                </div>
             </div>
           </div>
-        ) : (
-          <DashboardView positions={positions} stocks={stocks} cash={cash} totalEquity={totalEquity} totalMarketValue={totalMarketValue} onSelectStock={setSelectedSymbol} />
         )}
       </main>
     </div>
