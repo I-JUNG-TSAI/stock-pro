@@ -197,6 +197,30 @@ const fetchYahooCandles = async (symbol) => {
     return { error: 'Proxy 連線逾時或失敗' };
 };
 
+// 新增: 輕量級 Yahoo Quote 抓取
+const fetchYahooQuote = async (symbol) => {
+    const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?range=1d&interval=1d`;
+    const proxyGenerators = [
+        (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+        (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+    ];
+    for (const generator of proxyGenerators) {
+        try {
+            const proxyUrl = generator(yahooUrl);
+            const response = await fetch(proxyUrl);
+            if (!response.ok) continue;
+            const json = await response.json();
+            const result = json.chart?.result?.[0];
+            if (!result || !result.meta) continue;
+            const price = result.meta.regularMarketPrice;
+            const prevClose = result.meta.chartPreviousClose;
+            const change = prevClose ? ((price - prevClose) / prevClose) * 100 : 0;
+            return { price, change };
+        } catch (error) { }
+    }
+    return null;
+};
+
 const fetchStockQuoteFinnhub = async (symbol, apiKey) => {
   try {
     const response = await fetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${apiKey}`);
@@ -823,6 +847,7 @@ export default function StockTrackerApp() {
             const existingStock = stocks.find(s => s.symbol === symbol) || { symbol, name: symbol, price: 0, change: 0 };
             let fetchedPrice = existingStock.price; let fetchedChange = existingStock.change; let candles = []; let status = 'MOCK'; let error = null;
             let useSource = dataSource; if (useSource === 'FINNHUB' && !apiKey) useSource = 'YAHOO'; 
+            
             if (useSource === 'FINNHUB' && apiKey) {
                 const quote = await fetchStockQuoteFinnhub(symbol, apiKey); if (quote) { fetchedPrice = quote.price; fetchedChange = quote.change; }
                 if (symbol === selectedSymbol) {
@@ -831,12 +856,36 @@ export default function StockTrackerApp() {
                     }
                 }
             } else if (useSource === 'YAHOO') {
+                // 1. 先抓取 Quote (更新價格，適用於所有持倉)
+                const quote = await fetchYahooQuote(symbol);
+                if (quote) { 
+                    fetchedPrice = quote.price; 
+                    fetchedChange = quote.change; 
+                }
+
+                // 2. 只有選中的股票才抓取 K 線
                 if (symbol === selectedSymbol) {
-                    if (!forceRetry && candleCache.current[symbol]) { candles = candleCache.current[symbol]; status = 'REAL'; fetchedPrice = candles[candles.length-1].c; } else {
-                        const result = await fetchYahooCandles(symbol); if (result.success) { candles = result.data; status = 'REAL'; candleCache.current[symbol] = candles; if (result.price) { fetchedPrice = result.price; fetchedChange = result.change || 0; } else { fetchedPrice = candles[candles.length-1].c; const prev = candles[candles.length-2]; fetchedChange = prev ? ((fetchedPrice - prev.c)/prev.c)*100 : 0; } } else { error = result.error; }
+                    if (!forceRetry && candleCache.current[symbol]) { 
+                        candles = candleCache.current[symbol]; 
+                        status = 'REAL'; 
+                        // 如果 Quote 失敗但 Cache 有資料，嘗試用 Cache 補救價格
+                        if (!quote) fetchedPrice = candles[candles.length-1].c; 
+                    } else {
+                        const result = await fetchYahooCandles(symbol); 
+                        if (result.success) { 
+                            candles = result.data; 
+                            status = 'REAL'; 
+                            candleCache.current[symbol] = candles; 
+                            // 如果 Quote 失敗，用 K 線最新價格
+                            if (!quote) { 
+                                if (result.price) { fetchedPrice = result.price; fetchedChange = result.change || 0; } 
+                                else { fetchedPrice = candles[candles.length-1].c; const prev = candles[candles.length-2]; fetchedChange = prev ? ((fetchedPrice - prev.c)/prev.c)*100 : 0; } 
+                            }
+                        } else { error = result.error; }
                     }
                 }
             }
+            
             if (status !== 'REAL') {
                 if (candleData[symbol] && !forceRetry) { candles = candleData[symbol]; status = dataStatus[symbol] || 'MOCK'; } else {
                     const target = fetchedPrice || existingStock.price || 150; candles = generateCandleData(target, 180); status = error || 'MOCK'; fetchedPrice = candles[candles.length-1].c; const prev = candles[candles.length-2]; fetchedChange = ((fetchedPrice - prev.c)/prev.c)*100;
